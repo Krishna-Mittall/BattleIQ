@@ -2,6 +2,8 @@ package com.battleiq.battleiq.room;
 
 import com.battleiq.battleiq.redis.RedisService;
 import com.battleiq.battleiq.websocket.GameWebSocketHandler;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final RedisService redisService;
     private final GameWebSocketHandler webSocketHandler;
+    private final ObjectMapper objectMapper;
 
     // ─── Create Room ────────────────────────────────────────────────────────
 
@@ -30,11 +33,13 @@ public class RoomService {
 
         String roomCode = generateUniqueRoomCode();
 
+        String normalizedTopicData = normalizeTopicData(request.getTopicType(), request.getTopicData());
+
         Room room = Room.builder()
                 .roomCode(roomCode)
                 .hostName(request.getHostName().trim())
                 .topicType(Room.TopicType.valueOf(request.getTopicType().toUpperCase()))
-                .topicData(request.getTopicData())
+                .topicData(normalizedTopicData)
                 .maxPlayers(request.getMaxPlayers())
                 .status(Room.RoomStatus.WAITING)
                 .createdAt(LocalDateTime.now())
@@ -46,7 +51,7 @@ public class RoomService {
         redisService.addPlayerToRoom(roomCode, request.getHostName().trim());
 
         // ✅ FIX 1 — Store topic in Redis so GameService can access during question generation
-        redisService.setRoomTopicData(roomCode, request.getTopicData());
+        redisService.setRoomTopicData(roomCode, normalizedTopicData);
 
         // Init round to 1
         redisService.setCurrentRound(roomCode, 1);
@@ -154,5 +159,18 @@ public class RoomService {
                 .status(room.getStatus().name())
                 .players(players)
                 .build();
+    }
+
+    private String normalizeTopicData(String topicType, String topicData) {
+        try {
+            JsonNode node = objectMapper.readTree(topicData);
+            if (node.isObject() && node.get("type") == null) {
+                ((com.fasterxml.jackson.databind.node.ObjectNode) node)
+                        .put("type", topicType.toUpperCase());
+                return objectMapper.writeValueAsString(node);
+            }
+        } catch (Exception ignored) {
+        }
+        return topicData;
     }
 }

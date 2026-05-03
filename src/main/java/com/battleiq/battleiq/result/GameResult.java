@@ -23,7 +23,7 @@ public class GameResult {
     @Column(name = "player_name", nullable = false, length = 20)
     private String playerName;
 
-    @Column(name = "rank")
+    @Column(name = "player_rank")
     private int rank;
 
     @Column(name = "total_score")

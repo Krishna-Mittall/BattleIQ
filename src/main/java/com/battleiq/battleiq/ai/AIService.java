@@ -37,6 +37,9 @@ public class AIService {
     @Value("${groq.model}")
     private String groqModel;
 
+    @Value("${groq.fallback.model:qwen/qwen3.8-27b}")
+    private String groqFallbackModel;
+
     public List<Map<String, Object>> generateQuestions(String topicData, String difficulty, int count) {
         try {
             String prompt = buildQuestionPrompt(topicData, difficulty, count);
@@ -215,8 +218,40 @@ public class AIService {
     }
 
     private String callGroq(String userPrompt) throws Exception {
+        List<String> models = new ArrayList<>();
+        models.add(groqModel);
+        if (groqFallbackModel != null && !groqFallbackModel.isBlank()
+                && !groqFallbackModel.equals(groqModel)) {
+            models.add(groqFallbackModel);
+        }
+
+        Exception lastError = null;
+        for (String model : models) {
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    return callGroq(userPrompt, model);
+                } catch (Exception e) {
+                    lastError = e;
+                    if (!isRetryableGroqError(e) || attempt == 2) {
+                        break;
+                    }
+                    log.warn("Groq model {} failed (attempt {}/2); retrying: {}",
+                            model, attempt, e.getMessage());
+                    Thread.sleep(750L * attempt);
+                }
+            }
+            if (!model.equals(models.get(models.size() - 1))) {
+                log.warn("Groq model {} is unavailable; trying fallback model {}",
+                        model, groqFallbackModel);
+            }
+        }
+
+        throw lastError != null ? lastError : new Exception("No Groq model is configured");
+    }
+
+    private String callGroq(String userPrompt, String model) throws Exception {
         String bodyJson = objectMapper.writeValueAsString(Map.of(
-                "model", groqModel,
+                "model", model,
                 "messages", List.of(Map.of("role", "user", "content", userPrompt)),
                 "temperature", 0.5,
                 "max_tokens", 6000
@@ -232,11 +267,35 @@ public class AIService {
 
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new Exception("Groq API error: HTTP " + response.code());
+                String errorBody = response.body() == null ? "" : response.body().string();
+                if (errorBody.length() > 500) {
+                    errorBody = errorBody.substring(0, 500);
+                }
+                throw new GroqApiException(response.code(),
+                        "Groq API error: HTTP " + response.code() + " - " + errorBody);
+            }
+            if (response.body() == null) {
+                throw new Exception("Groq API returned an empty response body");
             }
             String responseBody = response.body().string();
             JsonNode root = objectMapper.readTree(responseBody);
             return root.path("choices").get(0).path("message").path("content").asText();
+        }
+    }
+
+    private boolean isRetryableGroqError(Exception error) {
+        if (error instanceof GroqApiException groqError) {
+            return groqError.statusCode == 429 || groqError.statusCode >= 500;
+        }
+        return true;
+    }
+
+    private static class GroqApiException extends Exception {
+        private final int statusCode;
+
+        private GroqApiException(int statusCode, String message) {
+            super(message);
+            this.statusCode = statusCode;
         }
     }
 

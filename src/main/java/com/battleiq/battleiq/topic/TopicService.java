@@ -109,12 +109,13 @@ public class TopicService {
                 String posterUrl = (posterPath != null)
                         ? "https://image.tmdb.org/t/p/w200" + posterPath
                         : null;
+                int tmdbId = node.get("id").asInt();
 
                 seriesList.add(TopicDTO.SeriesResult.builder()
-                        .tmdbId(node.get("id").asInt())
+                        .tmdbId(tmdbId)
                         .title(node.get("name").asText())
                         .firstAirYear(year)
-                        .totalSeasons(node.path("number_of_seasons").asInt(0))
+                        .totalSeasons(getTotalSeasons(tmdbId))
                         .posterUrl(posterUrl)
                         .build());
                 count++;
@@ -176,6 +177,21 @@ public class TopicService {
 
         } catch (Exception e) {
             log.error("TMDB episode count failed for series {} season {}: {}", seriesId, seasonNumber, e.getMessage());
+            return 0;
+        }
+    }
+
+    private int getTotalSeasons(int seriesId) {
+        String url = tmdbBaseUrl + "/tv/" + seriesId
+                + "?api_key=" + tmdbApiKey
+                + "&language=en-US";
+
+        try {
+            String response = get(url);
+            JsonNode root = objectMapper.readTree(response);
+            return root.path("number_of_seasons").asInt(0);
+        } catch (Exception e) {
+            log.warn("TMDB total seasons fetch failed for series {}: {}", seriesId, e.getMessage());
             return 0;
         }
     }

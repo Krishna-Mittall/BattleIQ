@@ -114,6 +114,8 @@ public class AIService {
                 - If the topic is time-sensitive and no year/season/episode cutoff is provided, prefer evergreen questions
                 - Never guess; skip uncertain facts internally and produce only reliable questions
                 - No duplicate questions
+                - Each question must test a different fact, character, event, or concept
+                - Keep each question and its options concise so the full JSON response fits
                 - Do not reveal the answer in the question itself
 
                 Respond ONLY with a valid JSON array. No markdown, no explanation.
@@ -177,9 +179,13 @@ public class AIService {
             );
 
             List<Map<String, Object>> valid = new ArrayList<>();
+            java.util.Set<String> seenQuestions = new java.util.HashSet<>();
             for (Map<String, Object> question : questions) {
                 Map<String, Object> normalized = normalizeQuestion(question);
-                if (isValidQuestion(normalized)) {
+                String questionText = normalized.get("question") == null
+                        ? ""
+                        : normalized.get("question").toString().trim().toLowerCase(Locale.ROOT);
+                if (isValidQuestion(normalized) && seenQuestions.add(questionText)) {
                     valid.add(normalized);
                 }
                 if (valid.size() >= expectedCount) {
@@ -212,8 +218,8 @@ public class AIService {
         String bodyJson = objectMapper.writeValueAsString(Map.of(
                 "model", groqModel,
                 "messages", List.of(Map.of("role", "user", "content", userPrompt)),
-                "temperature", 0.2,
-                "max_tokens", 2000
+                "temperature", 0.5,
+                "max_tokens", 6000
         ));
 
         RequestBody body = RequestBody.create(bodyJson, MediaType.get("application/json"));
@@ -313,11 +319,28 @@ public class AIService {
     }
 
     private Map<String, Object> getFallbackQuestion(int index) {
+        List<Map<String, Object>> fallbackQuestions = List.of(
+                fallbackQuestion("Which of these is a programming language?", List.of("A. Java", "B. HTML", "C. CSS", "D. JSON"), "A"),
+                fallbackQuestion("Which planet is known as the Red Planet?", List.of("A. Venus", "B. Mars", "C. Jupiter", "D. Mercury"), "B"),
+                fallbackQuestion("What is the chemical formula for water?", List.of("A. CO2", "B. O2", "C. H2O", "D. NaCl"), "C"),
+                fallbackQuestion("What is the capital of Japan?", List.of("A. Seoul", "B. Beijing", "C. Bangkok", "D. Tokyo"), "D"),
+                fallbackQuestion("Which is the largest ocean on Earth?", List.of("A. Pacific", "B. Atlantic", "C. Indian", "D. Arctic"), "A"),
+                fallbackQuestion("Which gas do plants absorb from the air?", List.of("A. Oxygen", "B. Carbon dioxide", "C. Helium", "D. Hydrogen"), "B"),
+                fallbackQuestion("How many bits are in a byte?", List.of("A. 4", "B. 6", "C. 8", "D. 16"), "C"),
+                fallbackQuestion("How many sides does a triangle have?", List.of("A. 2", "B. 4", "C. 5", "D. 3"), "D"),
+                fallbackQuestion("What type of celestial body is the Sun?", List.of("A. Star", "B. Planet", "C. Comet", "D. Asteroid"), "A"),
+                fallbackQuestion("What is Earth's natural satellite called?", List.of("A. Mars", "B. The Moon", "C. Europa", "D. Titan"), "B")
+        );
+        Map<String, Object> fallback = new LinkedHashMap<>(fallbackQuestions.get(Math.floorMod(index - 1, fallbackQuestions.size())));
+        fallback.put("id", "fallback_q" + index);
+        return fallback;
+    }
+
+    private Map<String, Object> fallbackQuestion(String question, List<String> options, String answer) {
         return Map.of(
-                "id", "fallback_q" + index,
-                "question", "Which of the following is a programming language?",
-                "options", List.of("A. Java", "B. HTML", "C. CSS", "D. JSON"),
-                "correctAnswer", "A"
+                "question", question,
+                "options", options,
+                "correctAnswer", answer
         );
     }
 
